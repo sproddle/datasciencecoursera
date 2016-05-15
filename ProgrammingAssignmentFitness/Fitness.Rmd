@@ -1,0 +1,148 @@
+---
+title: "Human Activity Recognition"
+author: "Rod Maclean"
+date: "May 10, 2016"
+output: html_document
+---
+
+#INTRODUCTION
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively.This data is commonly used to track how much activity is being performed. This study is designed to assess if the data can be used to show how well the task is being performed.
+
+#DATA
+
+##Initial Cleansing
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data used was downloaded at 5/10/2016 1:05 PM
+
+```{r,ECHO=FALSE }
+library(caret)
+library(randomForest)
+training <- read.csv("pml-training.csv")
+testing  <- read.csv("pml-testing.csv")
+
+```
+
+Using str(training,list.len = 999) we can see there are lots of columns with missing data, and some with values of "#DIV/0!"
+It is going to be necessary to remove sparsely populated columns and columns with near zero variance.
+
+The first column is an index so we will strip that off immediately
+```{r}
+training <- training[,-1]
+testing <- testing[,-1]
+```
+
+
+
+```{r}
+len <- length(training$classe)
+na_pct <-sapply(training, function(y) sum(length(which(is.na(y)))))/len
+na_pct
+```
+
+As we can see there is a pattern where many of the colums have >97% missing values. We will store the remainder in the variable gooodcols and discard the rest.
+ 
+```{r}
+goodcols <- names (which(na_pct <= .97))
+train2 <- training[,goodcols]
+goodcols <- c(goodcols, "problem_id" )
+test2 <- testing[,goodcols[-92]]
+```
+
+We are also going to need to remove the first 6 columns as these are not observations but are part of the measurement metadata.
+
+```{r}
+
+train3 <- train2[-(1:6)]
+test3 <- test2[-(1:6)]
+```
+Now we will determine the columns with near zero variance and remove these.
+
+```{r} 
+nzv <-nearZeroVar(train3,saveMetrics=TRUE)
+train4 <- train3[!as.logical(nzv$nzv)]
+test4 <- test3[!as.logical(nzv$nzv)]
+
+```
+
+##Cross Validation 
+
+We are going to need to try out some models so we will need a cross validation data set. This must be independent from our final test set so it can remain uncontaminated.
+We will split it 3/4 train and 1/4 test. We will also set a seed to ensure repeatability
+
+```{r} 
+set.seed(32123)
+TrainInd <- createDataPartition(train4$classe, p=0.75, list = FALSE)
+TrainSet <- train4[TrainInd,]
+TestSet <- train4[-TrainInd,]
+```
+
+First we will try using caret package to perform a repeated Cross Validation random forest fit. 
+
+
+```{r, cache=TRUE} 
+
+ctrl <- trainControl(method = "repeatedcv", number=10 , repeats = 5)
+rf_fit <- train(classe ~ .,
+             data = TrainSet,
+             method = "rf",  
+             trControl = ctrl,
+             allowParallel=TRUE
+             )
+```
+
+
+Now we calculate the  out-of-sample error using the 25% test data
+```{r}
+ptraining <- predict(rf_fit, TestSet)
+print(confusionMatrix(ptraining, TestSet$classe))
+```
+    
+
+We are going to repeat the training using randomForest package with default values and importance=TRUE. When cross validated with the 25% test set we get the following results:
+
+```{r, cache=TRUE} 
+set.seed(32123)
+rfModel <- randomForest(classe ~ ., data = TrainSet, importance = TRUE)
+ptraining <- predict(rfModel, TestSet)
+print(confusionMatrix(ptraining, TestSet$classe))
+```
+
+This is produces a better fit than the first model.
+
+###Expected Out Of Sample Error
+
+The expected accuracy of the chosen model is 99.69% with 95% confidence between 99.5% and 99.83%
+
+This means we would expect an out of sample error rate of 0.31%.
+
+
+This figure shows the importance of the predictors used:
+
+```{r} 
+varImpPlot(rfModel)
+```
+
+These are the predictions from the 20 data sets using the selected model:
+
+## Final results from supplied test set
+
+These are the predictions from the 20 data sets using the selected model:
+```{r} 
+ptraining <- as.data.frame(predict(rfModel, test4))
+ptraining
+```
+
+#CONCLUSION
+
+The best fits random forest model has an accuracy of 99.7% which is very high. It is therefore reasonable to conclude that we can accurately measure if an exercise is being poorly performed in one of the five modes modelled.
+
+
+As described in the original paper, however, there are still a large number of ways that the exercise could be poorly performed that are not included (we only modeled 5), and the model doesn't take into account combinations of errors either. In reality this approach is not necessarily a scaleable method of correcting exercising errors.
